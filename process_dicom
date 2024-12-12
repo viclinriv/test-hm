@@ -1,0 +1,61 @@
+import os
+import json
+from google.cloud import storage, pubsub_v1, healthcare
+from google.api_core.client_options import ClientOptions
+
+# Configure environment variables
+PROJECT_ID = os.environ.get('PROJECT_ID')
+PUBSUB_TOPIC_ID = 'dicom-ingestion-sub'
+DICOM_STORE_ID = 'projects/mde-pso-data-wranglers/locations/us-central1/datasets/highmark-dicom/dicomStores/dicomstore1'
+LOCATION = os.environ.get('LOCATION')  # e.g., 'us-central1'
+DATASET_ID = 'highmark-dicom'
+#DEIDENTIFY_TEMPLATE_ID = os.environ.get('DEIDENTIFY_TEMPLATE_ID')
+#VERTEX_AI_ENDPOINT_ID = os.environ.get('VERTEX_AI_ENDPOINT_ID')
+
+# Initialize clients
+storage_client = storage.Client()
+publisher = pubsub_v1.PublisherClient()
+healthcare_client = healthcare.DicomStoreClient(
+    client_options=ClientOptions(api_endpoint=f'{LOCATION}-healthcare.googleapis.com')
+)
+
+def process_dicom(event, context):
+    """
+    Cloud Run function triggered by a Pub/Sub message.
+
+    Args:
+        event (dict): The Pub/Sub message payload.
+        context (google.cloud.functions.Context): The context of the function call.
+    """
+    try:
+        # Get bucket and object name from Pub/Sub message
+        data = json.loads(event['data'])
+        bucket_name = data['bucket']
+        object_name = data['name']
+
+        # Download DICOM file from Cloud Storage
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(object_name)
+        dicom_bytes = blob.download_as_bytes()
+
+        # Move DICOM file to DICOM Store
+        dicom_store_path = healthcare_client.dicom_store_path(
+            PROJECT_ID, LOCATION, DATASET_ID, DICOM_STORE_ID
+        )
+        dicom_web_path = f'{dicom_store_path}/dicomWeb/studies'
+        healthcare_client.import_dicom_instance(
+            parent=dicom_web_path, dicom_web_instance=dicom_bytes
+        )
+
+        # TODO: De-identify DICOM data
+
+        # TODO: Export DICOM as PNG (requires additional libraries/services)
+
+        # TODO: Send PNG to Vertex AI (requires Vertex AI SDK and model configuration)
+
+    except Exception as e:
+        print(f'Error processing DICOM: {e}')
+        # Publish error message to a separate Pub/Sub topic for monitoring
+        error_topic_path = publisher.topic_path(PROJECT_ID, 'dicom_processing_errors')
+        error_message = f'Error processing DICOM file {object_name}: {e}'
+        publisher.publish(error_topic_path, error_message.encode('utf-8'))
