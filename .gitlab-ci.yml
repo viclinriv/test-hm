@@ -1,0 +1,18 @@
+# .gitlab-ci.yml
+stages:
+  - deploy
+
+deploy:
+  stage: deploy
+  image: google/cloud-sdk:latest
+  script:
+    - echo $SERVICE_ACCOUNT_KEY | tr '_' '\n' | base64 -d > gcloud-service-key.json
+    - gcloud auth activate-service-account --key-file gcloud-service-key.json
+    - gcloud config set project $PROJECT_ID
+    - gcloud run deploy $SERVICE_NAME \
+        --source . \
+        --platform managed \
+        --region $REGION \
+        --set-env-vars SOURCE_BUCKET=$SOURCE_BUCKET,SOURCE_BLOB=$SOURCE_BLOB,DESTINATION_BUCKET=$DESTINATION_BUCKET,DESTINATION_BLOB=$DESTINATION_BLOB \
+        --allow-unauthenticated \
+        --timeout=600
